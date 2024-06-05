@@ -78,7 +78,42 @@ mutate = dplyr::mutate
 count = dplyr::count
 rename = dplyr::rename
 
-
+# descriptio of columns and behaviours of interest we are extracting.
+# WLH_ID: Individual ID 
+# Population: Population individual is coded to 
+# DU: DU (COSEWIC) individual is coded to 
+# Ecotype: Ecotrype (Based on BC Designation) individual is coded to
+# Sex: sex of individual 
+# Calf_at_Heel: was there a calf recorded at capture at heel;
+#               Levels= Y-Yes; N- No, UNK- Uknown, UNC- Uknown 
+# Lactating: Was individual lactating? ; Levels = Y- Yes; N- No, NR- Not recorded
+# Age Class: Estimated age of individual: Levels: A- Adult; SA- Sub-Adult; ect.
+# sum_area : Area (km^2) of 100% MCP in summer      
+# sum_perimeter: Perimeter (km) of 100% MCP in summer 
+# wint_area:Area (km^2) of 100% MCP in winter
+# wint_perimeter:Perimeter (km) of 100% MCP in winter 
+# calf_area:Area (km^2) of 100% MCP in calving season
+# calf_perimeter:Perimeter (km) of 100% MCP in calving season 
+# sum_edge2area: Ratio of the perimeter:area (km:km^2) of the 100% MCP in summer
+# wint_edge2area:Ratio of the perimeter:area (km:km^2) of the 100% MCP in winter
+# calf_edge2area:Ratio of the perimeter:area (km:km^2) of the 100% MCP in calving
+# elev_range_abs:absolute range of average locations unsed from summer to winter 
+# path_length: overall sum of all successive GPS points (m)
+# rut_elev: Average elevation of locations used during ruttin period (location)
+# migration: Index of overlap between 95% summer and winter KDE 
+# Canopy_Cover: % Canopy cover of average locations during hypothesized calving events
+# calf_Date: Date of calving (calendar)
+# YDAY:Date of calving (Julian's Day)
+# calf_HR_shape: Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in calving season
+# wint_HR_shape:Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in winter
+# sum_HR_shape:Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in summer
+# calf_elev_gain:Elevation gained (average in meters) from late winter locaitons to calving locations
+# calf_elev: Elevation at hypothesized calving events 
+# calf_path:Sum of successive GPS fixes during calving 
+# moveelev_min: Minimum elevation of the movement period 
+# moveelev_max:Maxmum elevation of the movement period 
+# move_elev_diff:range of elevations used during movement period 
+# move_dist: Total distance travelled (sum of successive GPS fixes) during movement period 
 
 
 ###################################################################################
