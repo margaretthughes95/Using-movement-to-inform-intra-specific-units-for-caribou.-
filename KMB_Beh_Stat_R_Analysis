@@ -1,0 +1,630 @@
+##########################################################
+##Script for Statistical analysis of KMB_Beh Chapter
+##Written by Margaret Hughes
+##Compiled 03/04/2024
+## List of Dates Script Updated:
+
+
+
+###### 
+#Steps:
+## 1. Remove/drop NAs as the analysis cannot handle them - this causes us to lose some data
+## 2. check for co-linearity and spatial autocorrelation
+## 3. Cluster analysis 
+## 4. PCA Analysis 
+## 5. Random Forest analysis and variable importance. 
+
+
+####################################################################
+##R SETUP 
+#################################################################
+#clear workspace
+rm(list=ls(all=T))
+#sessionInfo()
+##set wd to the folder with all your csv's in it
+wd<-"PhD_TelemetryData2022/Master_RawData"
+setwd("~/PhD_TelemetryData2022/Master_RawData")
+mydsn<-("~/PhD_TelmetryData2022") ## set dsn in case we need to write spatial files
+##install libraries
+# if (!require("devtools")) install.packages("devtools")
+# devtools::install_github("hhwagner1/LandGenCourse")
+# if(!requireNamespace("qvalue", quietly = TRUE)) {  
+#   if (!requireNamespace("BiocManager", quietly = TRUE))
+#     install.packages("BiocManager")
+#   BiocManager::install(version = "3.16")
+#   BiocManager::install("qvalue")
+# }
+# if(!requireNamespace("lfmm", quietly = TRUE)) {  
+#   remotes::install_github("bcm-uga/lfmm")
+# }
+##install following libraries: 
+library(corrr)
+library(ggcorrplot)
+library(FactoMineR)
+library(factoextra)
+library(ggplot2)
+library(dplyr)
+library(devtools)
+library(sp)
+library(sf)
+#install_github('sinhrks/ggfortify')
+library(ggfortify); library(ggplot2)
+#### load in our colour palette for later 
+
+#load in cluster palette wanted that matches the other figures 
+colorBlindGrey8   <- c("#CC79A7", "#E69F00","#F0E442", "#009E73", 
+                        "#56B4E9","#0072B2", "#D55E00", "#999999")
+scales::show_col(colorBlindGrey8)
+
+##############################################################
+##import dataset: 
+####import final data  
+df<-read.csv("KMB_Behaviour/Final_Data_KMB_Beh/Hughes_KMB_Final_Behaviour_2023_NoNAsCalf.csv") %>% 
+  dplyr::select(-c(X)) # remove this silly column
+# rename for ease of use and to keep original unchanged
+dat<-df
+# check data
+head(dat)
+
+##################################################
+## column description:
+# WLH_ID: Individual ID 
+# Population: Population individual is coded to 
+# DU: DU (COSEWIC) individual is coded to 
+# Ecotype: Ecotrype (Based on BC Designation) individual is coded to
+# Sex: sex of individual 
+# Calf_at_Heel: was there a calf recorded at capture at heel;
+#               Levels= Y-Yes; N- No, UNK- Uknown, UNC- Uknown 
+# Lactating: Was individual lactating? ; Levels = Y- Yes; N- No, NR- Not recorded
+# Age Class: Estimated age of individual: Levels: A- Adult; SA- Sub-Adult; ect.
+# sum_area : Area (km^2) of 100% MCP in summer      
+# sum_perimeter: Perimeter (km) of 100% MCP in summer 
+# wint_area:Area (km^2) of 100% MCP in winter
+# wint_perimeter:Perimeter (km) of 100% MCP in winter 
+# calf_area:Area (km^2) of 100% MCP in calving season
+# calf_perimeter:Perimeter (km) of 100% MCP in calving season 
+# sum_edge2area: Ratio of the perimeter:area (km:km^2) of the 100% MCP in summer
+# wint_edge2area:Ratio of the perimeter:area (km:km^2) of the 100% MCP in winter
+# calf_edge2area:Ratio of the perimeter:area (km:km^2) of the 100% MCP in calving
+# elev_range_abs:absolute range of average locations unsed from summer to winter 
+# path_length: overall sum of all successive GPS points (m)
+# rut_elev: Average elevation of locations used during ruttin period (location)
+# migration: Index of overlap between 95% summer and winter KDE 
+# Canopy_Cover: % Canopy cover of average locations during hypothesized calving events
+# calf_Date: Date of calving (calendar)
+# YDAY:Date of calving (Julian's Day)
+# calf_HR_shape: Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in calving season
+# wint_HR_shape:Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in winter
+# sum_HR_shape:Ratio of the area of a circle with the same perimeter as 100% MCP to area of 100% MCP in summer
+# calf_elev_gain:Elevation gained (average in meters) from late winter locaitons to calving locations
+# calf_elev: Elevation at hypothesized calving events 
+# calf_path:Sum of successive GPS fixes during calving 
+# moveelev_min: Minimum elevation of the movement period 
+# moveelev_max:Maxmum elevation of the movement period 
+# move_elev_diff:range of elevations used during movement period 
+# move_dist: Total distance travelled (sum of successive GPS fixes) during movement period 
+## dataframe includes all individuals (some we did not compute a calving date)
+##therefore we need to drop the ones that we can't estimate calving 
+##this is found in the YDAY column: 
+dat<-dat %>% 
+  tidyr::drop_na(YDAY) %>% 
+  group_by(WLH_ID) %>% 
+  sample_n(1) %>%  ##sample just one per WLH_ID in case there are duplicates (there aren't but I am paranoid)
+  ungroup()
+
+##a note on location 
+##locations maintained following Elephant mclust paper to account for 
+##the fact that the location will have an impact on connectivity
+##furthermore, each animal has the ability to move between areas- i.e. dispersal capability is present 
+## additionally results are for applied conservation and based on management boundaries 
+##recommendation need to account for distribution and physical location (following COSEWIC guidelines)
+
+
+#####################################
+## Load needed libraries
+library(FactoMineR)
+library(ggfortify)
+library(factoextra)
+library(scatterplot3d)
+library(corrplot)
+#### need to drop the actual date of calving column:
+#this is captured in calf_Date the numical variable YDAY represents the Julian's day of this date
+dat<-dat %>% 
+  dplyr::select(-c(calf_Date))
+##some animals we lost during the movement period- need to drop these individuals 
+##drop NAs 
+trial<-dat %>% 
+  tidyr::drop_na(move_dist) 
+
+
+##check to make sure no NAs in Elevation 
+sapply(trial,function(x)sum(is.na(x)))
+sapply(trial,function(x)sum(is.na(x)))
+##check co-linearity
+# VIF step
+#load required library
+library(usdm)
+##without 28 animals lost in movement period
+# Run VIF to identify
+## we are dropping movement elevation min and max- this was just used for calculations! 
+trial<-trial %>% 
+  dplyr::select(-c(moveelev_min,moveelev_max))
+str(trial)
+(vs<-vifstep(scale(trial[,9:31]), th=3)) # Run VIF to identify
+#Following variables are co-linear; and therefore need to remove them 
+trial<- trial %>% 
+  dplyr::select(-c(sum_edge2area, wint_perimeter, calf_perimeter,
+            sum_perimeter, calf_elev, path_length, wint_area ))
+## scale and center the data around the mean (remaining variables)
+clust.dat<-scale(trial[,9:26]) ## scale all variables
+
+## we also want to check spatial auto-correlation
+# Spatial Autocorrelation
+# Spatial Patterns: Including latitude and longitude to address spatial patterns 
+# is a valid approach. Spatial autocorrelation can bias your results if not 
+# properly accounted for.
+# Impact on Results: It's crucial that including latitude and longitude improves 
+# your model's explanatory power without distorting the results. We checked if 
+# including coordinates altered overall results (clustering and PCA) and it 
+# did not alter the overall results significantly but did help explain more 
+# variation, it suggests that spatial structure is an important aspect of the behaviors you're studying.
+ 
+
+# 5. Issues with Including Latitude and Longitude
+# Multicollinearity: It's good that including latitude and longitude did not cause multicollinearity issues 
+# (as indicated by VIF).
+# Interpretation: Including spatial coordinates can aid in interpreting 
+# geographical patterns in behavioral variation, which can be ecologically 
+# meaningful.
+
+# Load necessary libraries
+
+library(spdep)
+
+# Load your data (assuming it's stored in a dataframe called 'trial')
+# Ensure your data is loaded correctly
+# str(trial)
+
+# Extract coordinates
+coordinates <- cbind(trial$Longitude, trial$Latitude)
+
+# Create a neighbors list using the nearest neighbors approach
+nb <- knn2nb(knearneigh(coordinates, k = 4))
+
+# Create spatial weights list object
+lw <- nb2listw(nb)
+
+# Identify numeric variables starting from 'sum_area' to the end
+numeric_vars <- trial[, sapply(trial, is.numeric)]
+
+# Initialize a list to store results
+moran_results <- list()
+
+# Loop through each numeric variable to calculate Moran's I
+for (var_name in colnames(numeric_vars)) {
+  var_data <- numeric_vars[[var_name]]
+  moran_test <- moran.test(var_data, lw)
+  moran_results[[var_name]] <- moran_test
+}
+
+# Print the results
+for (var_name in names(moran_results)) {
+  cat("\nVariable:", var_name, "\n")
+  print(moran_results[[var_name]])
+}
+
+## justification of including latitude and longitude in the analyses: 
+# Given the presence of positive spatial autocorrelation in your dataset,
+# incorporating latitude and longitude into your clustering and PCA analyses 
+# seems justified, especially if you expect geographic patterns and spatial 
+# dependency in your data. Here's why:
+# Clustering Analysis: Spatial clustering techniques, such as spatially 
+# constrained clustering algorithms or methods that incorporate spatial weights 
+# matrices, can account for spatial autocorrelation in the data. By including 
+# latitude and longitude, you're explicitly incorporating spatial information 
+# into the clustering process, which can help identify spatially coherent 
+# clusters that might not be captured by traditional clustering methods.
+# 
+# Principal Component Analysis (PCA): PCA aims to identify the principal axes of 
+# variation in the data. Including latitude and longitude as variables in PCA 
+# can help reveal spatial patterns in the data and identify spatially coherent 
+# patterns of variation. This can be especially valuable if you expect geographic
+# factors to influence the variability in your dataset.
+
+###########################################
+## running the clustering analysis using the package 'mclust'
+# ####clustering libraries
+library(mclust)
+library(dplyr)
+library(ggplot2)
+library(tidyverse)
+
+ 
+#set.seed(123)
+##checking it worked
+#head(clust.dat)
+###cluster analysis
+
+mc<-Mclust(clust.dat) ##using default values 
+#check the results of this 
+summary(mc)
+
+###create dataframe of results 
+beh_clust<-data.frame(Cluster=mc$classification)
+beh_clust$WLH_ID<-trial$WLH_ID
+beh_clust$Ecotype<-trial$Ecotype
+beh_clust$Population<-trial$Population
+beh_clust$DU<-trial$DU
+beh_clust$Longitude<-trial$Longitude
+beh_clust$Latitude<-trial$Latitude
+head(beh_clust)
+
+
+###check cluster results 
+# Ensure you have the 'fpc' package loaded
+library(fpc)
+library(cluster)
+library(clusterSim)
+
+# Silhouette analysis
+sil <- silhouette(mc$classification, dist(clust.dat))
+avg_silhouette <- mean(sil[, "sil_width"])
+
+cat("Average Silhouette Width:", avg_silhouette, "\n")
+# Calculate the Davies-Bouldin Index
+db_index <- clusterSim::index.DB(clust.dat, mc$classification)
+print(db_index$DB)
+
+## plot the results
+##export code:
+png("Cluster_Results_plot.png",
+    width=16.96,height=9.88, unit="cm",
+    res=300)
+#create plot
+clust.plot<-fviz_mclust(mc,what="classification",geom="point",
+                        legend="right",palette=colorBlindGrey8 ,
+                        main="",xlab="PC1:26.4%",
+                        ylab="PC2: 15.1%",
+                        xlim = c(-6, 6),
+                        ylim = c(-4,4))+
+  # Add a dotted grey line at x=0 and y=0
+  geom_hline(yintercept = 0, linetype = "dotted", color = "grey") +
+  geom_vline(xintercept = 0, linetype = "dotted", color = "grey")+
+  # Add the theme settings for text size
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5))+
+  # Change the legend title
+  labs(color = "Behavioural Cluster", fill = "Behavioural Cluster", 
+       shape = "Behavioural Cluster")
+
+clust.plot
+dev.off()
+
+##plot the BIC plot 
+
+##export code:
+png("Cluster_BIC_plot.png",
+    width=16.96,height=9.88, unit="cm",
+    res=300)
+
+
+
+# Plot using ggplot2
+bic_plot <- ggplot(bic_data, aes(x = Clusters, y = BIC)) +
+  geom_line(color = colorBlindGrey8[1], size = 1) +
+  geom_point(color = colorBlindGrey8[2], size = 3) +
+  theme_minimal(base_size = 15) +  # Base font size for the plot
+  theme(axis.text.x = element_text(size = 12),
+        axis.text.y = element_text(size = 12),
+        axis.title.x = element_text(size = 14),
+        axis.title.y = element_text(size = 14),
+        plot.title = element_text(size = 16, hjust = 0.5)) +
+  labs(x = "Number of Clusters", y = "BIC", 
+       title = "BIC Values for Different Numbers of Clusters")
+
+# Print the plot
+print(bic_plot)
+dev.off
+
+##########################
+## run a PCA to visualize
+##run the pca on the mc$data which is the result of the cluster analysis. 
+pca=prcomp(scale(mc$data))
+##create summary object
+s<-summary(pca)
+s #view summary object
+
+##create dataframe of results 
+pca_plot=data.frame(pca$x,cluster=factor(mc$classification), 
+                    WLH_ID = beh_clust$WLH_ID,
+                    Population= beh_clust$Population, 
+                    Ecotype= beh_clust$Ecotype,
+                    DU= beh_clust$DU)
+
+
+head(pca_plot) ##check this 
+
+##calculate explained variance for plotting
+variance_explained=round(100*(pca$sdev^2)/sum((pca$sdev^2)),1)
+## ensure that cluster is a factor 
+pca_plot$cluster<-as.factor(pca_plot$cluster)
+
+#####plot the biplot nicely 
+# Open a png Device
+##export code:
+png("PCA_Results_plot.png",
+    width=16.96,height=9.88, unit="cm",
+    res=300)
+# Plot individuals
+shapes<-c(21,24,22,3,7,8)
+shape_mapping <- shapes[as.numeric(factor(pca_plot$cluster))]
+colorBlindGrey8   <- c("#CC79A7", "#E69F00","#F0E442", "#009E73", 
+                       "#56B4E9","#0072B2", "#D55E00", "#999999")
+scales::show_col(colorBlindGrey8)
+color_mapping <- paste0(colorBlindGrey8[as.numeric(factor(pca_plot$cluster))]) # Add alpha (transparency) value "CC" (ap
+# Set the transparency level
+transparency <- 0.25  # Adjust the transparency level as needed (between 0 and 1)
+
+plot(pca_plot$PC1, pca_plot$PC2, xlab=paste("PCA 1 (", round(s$importance[2]*100, 1), "%)", sep = ""),
+     ylab=paste("PCA 2 (", round(s$importance[5]*100, 1), "%)", sep = ""),
+     col=alpha(color_mapping,0.5),cex=1,pch = shape_mapping, las=1,xlim=c(-6.0,6.9),
+     ylim=c(-6,6))
+
+###trial to fill the colours:
+# Loop through each unique color in color_mapping
+for (color in unique(color_mapping)) {
+  # Filter data for each color
+  subset_data <- pca_plot[color_mapping == color, ]
+  
+  # Plot points for each color with adjusted transparency
+  points(subset_data$PC1, subset_data$PC2, 
+         col = color, pch = shape_mapping[color_mapping == color], 
+         cex = 1, xlim = c(-6.0, 6.9), ylim = c(-6, 6), 
+         xlab = paste("PCA 1 (", round(s$importance[2] * 100, 1), "%)", sep = ""),
+         ylab = paste("PCA 2 (", round(s$importance[5] * 100, 1), "%)", sep = ""))
+}
+
+# Add grid lines
+abline(v=0, lty=2, col="grey50")
+abline(h=0, lty=2, col="grey50")
+# # Get co-ordinates of variables (loadings), and multiply by 10
+# l.x <- pca$rotation[,1]*10
+# l.y <- pca$rotation[,2]*10
+# # Draw arrows
+# arrows(x0=0, x1=l.x, y0=0, y1=l.y, col="black", length=0.15, lwd=1.5)
+# # Add a legend manually using legend() function
+# Define the colors and symbols used in the plot
+colors_used <- unique(color_mapping)
+symbols_used <- c(1,2,3,4,5,6)
+
+# Add legend entries for colors and symbols
+legend("topleft", legend = symbols_used, pch = symbols_used, 
+       col = colors_used, cex = 0.6, title = "Behavioural Cluster")
+
+# Add arrows for variable contributions (loadings)
+# Assuming 'pca' is your PCA object and 'rotation' contains the loadings
+l.x <- pca$rotation[, 1] * 10  # Scale factor for visibility
+l.y <- pca$rotation[, 2] * 10  # Scale factor for visibility
+
+arrows(0, 0, l.x, l.y, col = "black", length = 0.1, lwd = 1.5, angle = 20)
+
+dev.off()
+
+
+##scree plot 
+# Load the required library
+library(factoextra)
+
+# Create the scree plot
+scree_plot <- fviz_eig(pca, addlabels = TRUE, barcolor = "#474F58",
+                       fill="#474F58") +
+  # Change bar color
+  theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank(), 
+        panel.background = element_blank(), axis.line = element_line(color = "black")) +
+  # Remove title
+  labs(title = NULL) +
+  # Change y-axis label
+  ylab("Percentage of Explained Variance") +
+  # Change x-axis label
+  xlab("Number of Components")
+
+# Display the modified scree plot
+scree_plot
+
+##plot variable contributions 
+library(ggplot2)
+library(stringr)
+
+# Threshold for significant contribution
+threshold <- 0.1  # Adjust this threshold as needed
+
+# Get the absolute values of loadings for each variable
+loadings_abs <- abs(pca$rotation[, 1:2])
+
+# Filter variables based on the threshold
+significant_vars_pc1 <- rownames(loadings_abs)[loadings_abs[, 1] >= threshold]
+significant_vars_pc2 <- rownames(loadings_abs)[loadings_abs[, 2] >= threshold]
+
+# Create a data frame for plotting PC1 with significant variables
+loadings_df_pc1 <- data.frame(
+  Variable = significant_vars_pc1,
+  Loadings_PC1 = loadings_abs[significant_vars_pc1, 1]
+)
+
+# Create a data frame for plotting PC2 with significant variables
+loadings_df_pc2 <- data.frame(
+  Variable = significant_vars_pc2,
+  Loadings_PC2 = loadings_abs[significant_vars_pc2, 2]
+)
+
+# Sort the data frames by Loadings_PC1 and Loadings_PC2
+loadings_df_pc1 <- loadings_df_pc1[order(-loadings_df_pc1$Loadings_PC1), ]
+loadings_df_pc2 <- loadings_df_pc2[order(-loadings_df_pc2$Loadings_PC2), ]
+
+# Plot the loadings for PC1
+labels_pc1<-c("Rutting Elevation (m)", "Movement Distance (m)",
+              "Migration (IO)","Canopy Cover (%)", "Summer MCP Shape",
+              "Seasonal Elevation Range (m)","Winter Edge:Area","Calving Elevation Gain (m)",
+              "Calving Edge:Area", "Summer MCP Area (km²)", "Calving Path Length (m)",
+              "Calving MCP Area (km²)", "Winter MCP Area (km²)")
+plot_pc1 <- ggplot(loadings_df_pc1, aes(x = reorder(Variable, Loadings_PC1), y = Loadings_PC1)) +
+  geom_bar(stat = "identity", fill = "#474F58") +
+  labs(x= "", y = "Absolute Loading") +
+  theme_bw()+
+  theme(axis.text.x = element_text(angle = 90, vjust=0.75), #, hjust = 0.5),
+        axis.title.x = element_blank()) +
+  scale_x_discrete(labels= function(x) str_wrap(labels_pc1,
+                                                width = 15))
+plot_pc1
+
+############################
+## Random Forest model to evaluate what behaviours are driving differentiation.
+
+
+##random forest tutorial 
+library(dplyr)                                # Load dplyr
+# Set the number of decimal places to 3
+options(digits = 4)
+# Installing the package 
+#install.packages("caTools")    # For Logistic regression 
+library(caTools)
+
+#install.packages('randomForest') # For generating random forest model
+library(randomForest)
+# classification and regression training : The library caret has a function to make prediction.
+# remove.packages("cli")
+#install.packages("cli", version = "3.6.2")
+
+
+#install.packages('caret')                   
+# library(cli)
+library(caret)
+
+# install.packages("ROCR")
+library(ROCR)
+library(dplyr)
+
+####read dataset - this is the behaviours and clusters only no other info 
+tree<-read.csv("KMB_Behaviour/Hughes_Tree_KMB_Data.csv") %>% 
+  dplyr::select(-c(X,WLH_ID,Population,DU,Ecotype,Latitude,Longitude))
+library(tidyr)
+##STEP 1: DATA PREP:
+# Check number of rows and columns
+dim(tree)
+###make dependent variable a factor (categorical)
+tree$Cluster<-as.factor(tree$Cluster)
+str(tree)
+sapply(tree,function(x)all(any(is.na(x))))
+sapply(tree,function(x)sum(is.na(x)))
+##STEP 2: RUN THE RANDOM FOREST MODEL
+library(randomForest)
+set.seed(123)
+rf <-randomForest(Cluster~.,data=tree, ntree=500) 
+print(rf)
+floor(sqrt(ncol(tree) - 1))
+##STEP 3: FIND THE OPTIMAL MTRY VALUE 
+mtry <- tuneRF(tree[-1],tree$Cluster, ntreeTry=500,
+               stepFactor=1.5,improve=0.01, trace=TRUE, plot=TRUE)
+best.m <- 4 ## this is set thorugh evaluating the best fit in the step above
+print(mtry)
+print(best.m)
+
+##build model again using best mtry value 
+set.seed(123)
+rf <-randomForest(Cluster~.,data=tree, mtry=best.m, importance=TRUE,ntree=500)
+print(rf)
+#Evaluate variable importance
+importance(rf)
+varImpPlot(rf)
+
+# Predict on the training data
+predictions <- predict(rf, tree)
+
+# Calculate accuracy
+accuracy <- sum(predictions == tree$Cluster) / length(predictions)
+cat("Accuracy:", accuracy, "\n")
+
+# Out-of-bag (OOB) error rate
+oob_error <- rf$err.rate[nrow(rf$err.rate), "OOB"]
+cat("Out-of-bag (OOB) Error Rate:", oob_error, "\n")
+
+# Variable Importance
+varImp<-data.frame(importance(rf))
+varImpPlot(rf)
+
+### trying to make better plot 
+# Sample variable importance scores
+importance_scores <- rf$importance
+
+
+
+
+
+
+
+# Apply the function within varImpPlot
+varImpPlot(rf, labels= c("Rut Elevation","Canopy Cover (%)","Calving MCP Area",
+                         "Winter Edge Ratio","Absolute Elevation Range","Calving Path Length",
+                         "Calving Edge Ratio","Summer MCP Area","Movement Distance","Calving Elevation Gain",
+                         "Summer MCP Shape", "Movement Elevation Difference","Migration (IO)",
+                         "Estimated Calving Date","Calving MCP Shape","Winter MCP Shape"))
+
+varImpPlot(rf, labels= c("Winter MCP Shape","Calving MCP Shape","Estimated Calving Date",
+                         "Migration (IO)", "Movement Elevation Difference (m)","Summer MCP Shape",
+                         "Calving Elevation Gain (m)","Movement Distance (m)", "Summer MCP Area (km^2)",
+                         "Calving Edge Ratio","Calving Path Length (m)","Absolute Elevation Range (m)","Winter Edge Ratio",
+                         "Calving MCP Area (km^2)", "Canopy Cover (%)","Rutting Elevation (m)"),
+           main= " ")
+
+##trying to plot this in ggplot:
+# Variable names
+# Your desired variable names
+var_names <- c("Summer MCP Area (km^2)", "Calving MCP Area (km^2)", "Winter Edge Ratio", "Calving Edge Ratio",
+               "Absolute Elevation Range (m)", "Rutting Elevation (m)", "Migration (IO)", "Canopy Cover (%)",
+               "Calving Date", "Calving MCP Shape", "Winter MCP Shape", "Summer MCP Shape",
+               "Calving Elevation Gain (m)", "Calving Path Length (m)", "Movement Elevation Difference (m)",
+               "Movement Path Length (m)")
+# Corresponding importance values (assuming these are your importance values)
+importance_values <- varImp$MeanDecreaseAccuracy
+gigi_values<-varImp$MeanDecreaseGini
+
+# Create a data frame for plotting
+plot_data <- data.frame(variables = var_names, importance = importance_values, 
+                        gini= gigi_values)
+# Reorder the variable factor levels based on importance values
+plot_data$variables <- factor(plot_data$variables,
+                              levels = plot_data$variables[order(plot_data$importance, 
+                                                                 decreasing = FALSE)])
+##### PLOTTING VARIABLE IMPORTANCE
+##export code:
+png("RF_Variable_Importance_plot.png",
+    width=16.96,height=9.88, unit="cm",
+    res=300)
+# Create the ggplot
+MeanDecreaseAccuracy<-ggplot(plot_data, 
+                             aes(y = variables,
+                                 x = importance)) +
+  geom_point(size = 3, color = "black") +
+  labs(y = NULL, x = "Mean Decrease Accuracy") +
+  theme_bw()+
+  theme(axis.text.x = element_text(size = 12),
+                   axis.text.y = element_text(size = 12),
+                   axis.title.x = element_text(size = 14),
+                   axis.title.y = element_text(size = 14),
+                   plot.title = element_text(size = 16, hjust = 0.5))
+MeanDecreaseAccuracy
+
+dev.off()
+# theme(axis.text.y = element_text(hjust = 1, margin = margin(r = 5, unit = "mm")))+
+
+plot_data$variables <- factor(plot_data$variables,
+                              levels = plot_data$variables[order(plot_data$gini, 
+                                                                 decreasing = FALSE)])
+
+
+
+ 
+
