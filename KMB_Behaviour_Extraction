@@ -1,0 +1,1404 @@
+## below is the analysis and extraction of individual behaviours of caribou in Western Canada based on Raw Telemetry data. The telemetry data is not shared based on data sharing agreements, and was cleaned prior to getting to this stage. QGIS and R were both used for this analysis 
+## depending on the variable of interest. Elevation data was obtained from the Canadian Digital Elevation Model (30m resolution) which is publicly available. Canopy cover data was extracted from the dataset avaiable through the following paper:
+## Oduro Appiah, J., Opio, C., Venter, O., Donnelly, S., and Slatter, D. (2021). Assessing Forest Cover Change and Fragmentation in Northeastern British Columbia Using Landsat Images and a Geospatial Approach.Earth Systems and Environement. 5(2). pp. 253-270. DOI:10.1007/s41748-021-00207-8
+## this was done by taking the canopy cover in the three day window that calving was identified in, and then the average canopy cover value of all locations during this period. 
+
+############################################################################
+####Individual Behavioural Analyses- full data set 
+#written by Margaret Hughes 07/28/2023
+# Last uodated 07/31/2023
+##################################################################################
+###setup
+#clear workspace
+rm(list=ls(all=T))
+
+##set wd to the folder with all your csv's in it
+wd<-"PhD_TelemetryData2022/Master_RawData"
+setwd("~/PhD_TelemetryData2022/Master_RawData")
+mydsn<-("~/PhD_TelmetryData2022")
+
+#set some work session specific preferences
+options(scipen=999, dplyr.width = Inf, tibble.print_min = 50, digits=2, 
+        repos='http://cran.rstudio.com/', dplyr.summarise.inform = FALSE, pillar.sigfig = 8) 
+#scipen forces outputs to not be in scientific notation 
+#dplyr.width will show all columns for head() function 
+#tibble.print_min sets how many rows are printed 
+#repos sets the cran mirror
+#dplyr.summarise.inform suppresses a specific message about how summarize() ungroups output
+#pillar.sigfig sets the number of significant digits that will be printed and highlighted
+
+############################
+#package notes
+############################
+#these packages will be retired by the end of 2023:
+#maptools - some functionality will be moved to 'sp'
+#rgeos - plan transition to sf functions using GEOS at your earliest convenience.
+#rgal - plan transition to sf/stars/terra functions using GDAL and PROJ
+#amt- animal movement analysis- similar functions to adehabitatHR but w are trying it 
+
+#note that MasterBayes, Imap, and plotKML are not avaible for this version of R
+#you need to download the archieved version this way (only need to do this after you've updated ):
+#devtools::install_version("MasterBayes",version="2.57") #still doesnt work
+#devtools::install_version("Imap",version="1.32")
+#devtools::install_version("plotKML",version="0.8-2") #still doesnt work
+
+#efficient way to load packages
+packages <- c("plyr","dplyr", "tidyr", "lubridate", "tidyverse", "devtools",
+              "rcompanion", "plyr", "magrittr", "stringr",
+              "psych", "ggplot2", "gridExtra", "cowplot", "scales", 
+              "ggnetwork","lme4", "glmmTMB", "DescTools", "spatsoc", "sf", 
+              "Imap","maptools", "sp", "rgeos", "rgdal", "maps", "raster", 
+              "RgoogleMaps", "ggmap", "jpeg", "adehabitatHR", "adehabitatLT")
+
+
+library(Imap)
+#Imap needed for gdist() function
+#maptools needed for gBuffer() function
+#sp needed for gBuffer() function
+#rgeos needed for gBuffer() and gDistance() functions
+#rgdal needed for spTransform() function
+
+# Install packages not yet installed
+installed_packages <- packages %in% rownames(installed.packages())
+if (any(installed_packages == FALSE)) {
+  install.packages(packages[!installed_packages])
+}
+
+#updating packages
+#update.packages(ask = FALSE)
+library(lubridate)
+# Packages loading
+lapply(packages, library, character.only = TRUE)
+library(plyr)
+library(dplyr)
+
+#because some packages mask dplyr, write some functions here to get by this
+select = dplyr::select
+mutate = dplyr::mutate
+count = dplyr::count
+rename = dplyr::rename
+
+
+
+
+###################################################################################
+##### HUGHES SEASONAL ELEVATION WITH FULL TELEMETRY DATASET 
+
+d<-read.csv("KMB_Behaviour/Hughes_KMB_Telemetry_ELEV_Updated_2023.csv") %>% 
+  mutate(DateTime=ymd_hms(DateTime),
+         Month=month(DateTime),##Create a as.POSIXct
+         Month=as.factor(Month),
+         Day=day(DateTime),
+         Date=as.Date(DateTime)) %>% #,##Create a as.POSIXct
+  #Day=as.factor(Day))%>%##create month as factor 
+  filter(Year>=2004) %>% ##filtering for years greater than 2004
+  arrange(DateTime) %>% ##arrange dates 
+  dplyr::select(c(WLH_ID,Longitude,Latitude,DateTime,Year,Month,Day,elev,
+           Population,DU,Date,Ecotype,Season)) ##Run select at the end select desired columns
+
+str(d)
+## there are some errors we know about in the raw data that are updated below: 
+# updated_data <- d %>%
+#   mutate(WLH_ID = case_when(
+#     WLH_ID == "20-2854" & Population == "Barkerville" ~ "20-2854_B",
+#     WLH_ID == "20-2854" & Population == "Wells Gray North" ~ "20-2854_WGN",
+#     TRUE ~ WLH_ID  # Keep WLH_ID as is for other cases
+#   ))
+# 
+# write.csv(updated_data,
+#           file="KMB_Behaviour/Hughes_KMB_Telemetry_Filtered_CLEANED_2023.csv")
+
+
+combined_df<-read.csv("KMB_Behaviour/Hughes_KMB_Telemetry_Filtered_CLEANED_2023.csv") %>% 
+  mutate(DateTime=ymd_hms(DateTime),
+         Month=month(DateTime),##Create a as.POSIXct
+         Month=as.factor(Month),
+         Day=day(DateTime),
+         Date=as.Date(DateTime)) %>% #,##Create a as.POSIXct
+  #Day=as.factor(Day))%>%##create month as factor 
+  filter(Year>=2004) %>% ##filtering for years greater than 2004
+  arrange(DateTime) %>% ##arrange dates 
+  dplyr::select(c(WLH_ID,Longitude,Latitude,DateTime,Year,Month,Day,elev,
+                  Population,DU,Date,Ecotype,Season))
+
+str(combined_df)
+# paperIDs<-d %>% 
+#   filter(Year>=2014)
+# length(unique(paperIDs$WLH_ID))
+# length(unique(paperIDs$Population))
+# breakdownDU<- paperIDs %>%
+#   group_by(DU) %>%
+#   summarize(Unique_IDs = n_distinct(WLH_ID))
+# breakdownEco<- paperIDs %>%
+#   group_by(Ecotype) %>%
+#   summarize(Unique_IDs = n_distinct(WLH_ID))
+# checkDate<-left_join(dat,d,by="WLH_ID", multiple="all")
+# min(checkDate$Year)
+
+###We are calculating the average elevation used within each season 
+##we need to add Ecotype 
+##below is based on population designation into ecotype as described by BC caribou recovery plan
+Boreal<-c("Chinchaga", "Maxhamish","Westside Fort Nelson","Calendar","Snake-Sahtaneh","Hay River")
+Mountain<-c("Columbia South","Central Selkirks","South Selkirks","Columbia North","Hart Ranges",
+            "Narrow Lake ", "North Cariboo","Groundhog","Wells Gray South","Wells Gray North",
+            "Barkerville","Purcells South") 
+Northern<-c("Quintette", "Wolverine","Atlin","Carcross","Finlay","Frog","Gataga","Graham",
+            "Horseranch","Kennedy Siding","Itcha-Ilgachuz","Little Rancheria","Telkwa",
+            "Pink Mountain","Tweedsmuir","Muskwa","Rabbit","Level-Kawdy","Narraway","Swan Lake",
+            "Liard Plateau","Spatsizi")  
+
+## add population
+df<-d %>% 
+  mutate(Ecotype=case_when(d$Population%in%Boreal~"Boreal",
+                           d$Population%in%Northern~"Northern",
+                           d$Population%in%Mountain~"Mountain"))
+
+
+
+###We need to add seasons to the overall dataset:
+
+##summer: 1 july to 15 september 
+##rut: 16 september to 15 november 
+##Winter: 1 December to 30 April 
+##Calving: 15 May to 30 June 
+##movement period: November 16th to November 30th
+##for now we are just calculating seasonal elevation- calving elevation gain will be calculated after 
+
+df<-d %>% 
+  mutate(Season=ifelse((Day>=1 & Month==7)|(Month %in% 8)|(Day<=15 & Month==9),"summer",
+                       ifelse((Day>=16 & Month==9)|(Day<=15 & Month==11),"rut",
+                              ifelse((Day>=1 & Month==12)|(Month %in% 1:3)|
+                                       (Day<=30 & Month==4),"winter",
+                                     ifelse((Day>=15 & Month==5)|(Day<=30 & Month==6),
+                                            "calving",
+                                            ifelse((Day>=16 & Month==11)|
+                                                     (Day<=30 & Month==11),
+                                                   "move","other"))))))
+
+head(df)
+unique(df$Season)
+######Calf season (difference from late winter to calving)
+df<-df %>% 
+  mutate(calf_seas=ifelse(Month==5&Day>=15|Month==6&Day<=30,"calving",
+                          ifelse(Month==2&Day<=22|Month==3|Month==4&Day>=30,
+                                 "latewinter","other")))
+Trial<-Trial %>% 
+  mutate(calf_seas=ifelse(Month==5&Day>=15|Month==6&Day<=30,"calving",
+                          ifelse(Month==2&Day<=22|Month==3|Month==4&Day>=30,
+                                 "latewinter","other")))
+unique(df$calf_seas)
+str(df)
+
+####calculate mean elevation 
+
+seas.elev<-df %>% 
+  group_by(WLH_ID,Season,Year) %>% #group by ID, Season, and year
+  mutate(seas_elev=mean(elev,na.rm=TRUE)) %>%  ##compute mean elevation in each group
+  sample_n(1) %>% ##keep one point for this
+  ungroup() %>% 
+  group_by(WLH_ID,Season) %>% 
+  mutate(mean_elev=mean(seas_elev,na.rm=TRUE)) %>% 
+  sample_n(1) %>% 
+  filter(Season!="other") %>% 
+  select(c(WLH_ID,Season,mean_elev))
+head(seas.elev)
+## pivot the data 
+trial<-seas.elev %>% 
+  pivot_wider(names_from = Season, values_from = mean_elev)
+
+unique(df$calf_seas)
+calf.elev<-df %>% 
+  filter(Season!="other") %>% 
+  group_by(WLH_ID,Year,calf_seas) %>% 
+  mutate(calf_seas_elev=mean(elev,na.rm=TRUE)) %>% 
+  ungroup() %>% 
+  group_by(WLH_ID,calf_seas) %>% 
+  mutate(mean_calf_elev=mean(calf_seas_elev,na.rm=TRUE)) %>% 
+  sample_n(1) %>% 
+  ungroup() 
+
+
+head(calf.elev)
+trial1<-calf.elev %>% 
+  pivot_wider(names_from = calf_seas, values_from = calf_seas_elev) %>% 
+  mutate(calf_elev_gain = latewinter - calving) %>% 
+  select(-c(latewinter))
+head(trial1)
+
+
+seasonal_elevation<-merge(trial,trial1,by="WLH_ID")
+head(seasonal_elevation)
+length(unique(seasonal_elevation$WLH_ID))
+
+seasonal_elevation<-seasonal_elevation %>% 
+  mutate(elev_range=winter-summer,
+         calf_elev_gain=latewinter-calving,
+         elev_range_abs=abs(elev_range))
+head(seasonal_elevation)
+
+##write this raw file
+write.csv(seasonal_elevation,file="KMB_Behaviour/Hughes_Seasonal_Elevation_2023.csv")
+
+
+
+##############################################################################
+##Hughes Migration (KDE overlap) full dataset 
+###############################################################################
+d<-read.csv("RawFiles/Hughes_KMB_withelev_CLEANED.csv") %>% 
+  #filter(Season=="summer") %>% 
+  mutate(DateTime=ymd_hms(DateTime),
+         Month=month(DateTime),##Create a as.POSIXct
+         Month=as.factor(Month),
+        Day=day(DateTime),
+        Date=as.Date(DateTime)) %>% #,##Create a as.POSIXct
+   #Day=as.factor(Day))%>%##create month as factor 
+  filter(Year>=2004) %>% ##filtering for years greater than 2004
+  arrange(DateTime) %>% ##arrange dates 
+  select(c(WLH_ID,Longitude,Latitude,DateTime,Year,Month,Day,elev,
+           Population,DU,Date,Ecotype,Season)) ##Run select at the end select desired columns
+head(d)
+str(d)
+unique(d$Season)
+
+
+sum_elev<-aggregate(elev~WLH_ID+Year,data=d,FUN=mean,na.rm=TRUE)
+
+head(sum_elev)
+most_recent<-sum_elev %>% 
+  group_by(WLH_ID) %>% 
+  slice(which.max(Year))
+head(most_recent)
+###this is going to go over to the other script to combine to plot the range 
+seasonal<-d %>% 
+  filter(d$Season=="winter"|d$Season=="summer") 
+
+unique(seasonal$Season)
+##need to ensure that there are at least 15 relocations per ID in each season and year 
+##THEN we make sure that within each year an ID has both winter and summer 
+kernels<-seasonal %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>% 
+  dplyr::sample_n(1) %>% ##sample 1 point per ID and DateTime 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Season,Year) %>% 
+  dplyr::filter(n()>= 15) %>% ##make sure there are only IDs with enough data 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Year) %>% 
+  mutate(NoSeas=n_distinct(Season)) %>% ##this is how we get only ones with two season 
+  dplyr::filter(NoSeas>1) %>% 
+  ungroup()
+head(kernels)
+unique(kernels$NoSeas)##making sure there are no 1s (corresponding to instances of only one season in a year)
+### want to make a unique field for season and ID 
+
+##renaming to match previous code- really being lazy here 
+Match<-kernels
+########Just changing variable names here to follow tutorial 
+Match$combo<-paste(Match$WLH_ID,Match$Season,Match$Year,sep="_")##add unique identifier to add to dat later
+write.csv(Match,file="RawFiles/Hughes_KMB_Kernel_Telemetry_events.csv")
+##change names to make track 
+names(Match)[names(Match)=="Longitude"]<-"x"
+names(Match)[names(Match)=="Latitude"]<-"y"
+names(Match)[names(Match)=="DateTime"]<-"t"
+names(Match)[names(Match)=="combo"]<-"id"
+str(Match)##check that this worked
+library(rgdal)
+##set CRS
+utm10N <- "+proj=longlat +ellps=WGS84 +datum=WGS84 _no_defs "
+library(amt) ##reload library 
+##check data 
+#str(Match)
+length(unique(Match$WLH_ID))
+
+##make track 
+dat<-make_track(Match,x, y,t, id = id,
+                crs=utm10N)
+
+
+########LOOP SETUP 
+###seperates ids in combo field 
+bou<-dat$id
+indiv<-rep(NA,times=length(bou))
+season<-rep(NA,times=length(bou))
+year<-rep(NA,times=length(bou))
+splt<-strsplit(dat$id,split="_")
+
+#####this loops through to add the separated info to the dat object 
+
+for (i in 1:length(dat$id)){
+  temp<-splt[[i]]
+  indiv[i]<-temp[1]
+  season[i]<-temp[2]
+  year[i]<-temp[3]
+}
+dat$indiv<-indiv
+dat$year<-year
+dat$season<-season
+str(dat)
+
+WLHID<-rep(NA,times=length(unique(Match$WLH_ID)))
+levels95<-rep(0.95,times=length(unique(Match$WLH_ID)))
+levels05<-rep(0.5,times=length(unique(Match$WLH_ID)))
+overlap95<-rep(NA,times=length(unique(Match$WLH_ID)))
+overlap95.2<-rep(NA,times=length(unique(Match$WLH_ID)))
+year<-rep(NA,times=length(unique(Match$WLH_ID)))
+isosummer<-as.list(rep(NA,times=length(unique(Match$WLH_ID))))
+isowinter<-as.list(rep(NA,times=length(unique(Match$WLH_ID))))
+
+count<-0
+### we set count to 0- then it tells r store things here
+##first thing we do before we store is +1 (count will be 1 and store in first slot)
+##then it will be the first row 
+
+##we are moving forward each time +1 so we are not storing over things
+
+for (i in unique(dat$year)){
+  for (j in unique(dat$indiv)){
+    fisher.f1 <- dat %>% filter(year==i,indiv==j,season=="summer")
+    fisher.f2<-dat %>% filter(year==i,indiv==j,season=="winter")
+    if (nrow(fisher.f1)==0 | nrow(fisher.f2)==0) next 
+    count<-count+1
+    kde1 <- hr_kde(fisher.f1, levels = c(0.5, 0.95))
+    kde2 <- hr_kde(fisher.f2, levels = c(0.5, 0.95))
+    overlap95[count]<-hr_overlap(kde1, kde2)[1,2]
+    overlap95.2[count]<-hr_overlap(kde2, kde1)[1,2]
+    isosummer[[count]]<-kde1
+    isowinter[[count]]<-kde2###lists use double square brackets
+    year[count]<-i
+    WLHID[count]<-j
+    
+  }
+}
+
+
+
+dim(overlap95)
+head(overlap95_df)
+count
+WLHID
+##when work
+results<-data.frame(WLH_ID=c(WLHID),year=c(year),
+                    overlap95=c(unlist(overlap95)),
+                    overlap95.2=c(unlist(overlap95.2)))
+head(results)
+length(unique(results$WLH_ID))
+
+
+
+trial<-results %>% 
+  mutate(overlap=ifelse(results$overlap95<results$overlap95.2,
+                        results$overlap95.2,results$overlap95))
+###extra points to be fixed 
+calf<-ext %>% 
+  filter(Season=="calving")
+
+kernels_B<-subset(kernels,WLH_ID=="20-2854_B")
+kernel_WGN<-subset(kernels,WLH_ID=="20-2854_WGN")
+sum_B<-kernel_WGN %>% 
+  filter(Season=="summer")
+wint_B<-kernel_WGN %>% 
+  filter(Season=="winter")
+
+
+
+####calculate home range to take kernels in QGIS 
+data.xy_1 = calf[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = calf[c("WLH_ID")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=100, extent = 2.5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=95)
+plot(homerangeRD_1)##plot  
+####write the shape files 
+
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/GPS_checks", 
+         layer="20-2854_calf", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+
+
+
+
+
+names(sum_B)[names(sum_B)=="Longitude"]<-"x"
+names(sum_B)[names(sum_B)=="Latitude"]<-"y"
+names(sum_B)[names(sum_B)=="DateTime"]<-"t"
+names(sum_B)[names(sum_B)=="WLH_ID"]<-"id"
+names(wint_B)[names(wint_B)=="Longitude"]<-"x"
+names(wint_B)[names(wint_B)=="Latitude"]<-"y"
+names(wint_B)[names(wint_B)=="DateTime"]<-"t"
+names(wint_B)[names(wint_B)=="WLH_ID"]<-"id"
+str(sum_B)##check that this worked
+library(rgdal)
+##set CRS
+utm10N <- "+proj=longlat +ellps=WGS84 +datum=WGS84 _no_defs "
+library(amt) ##reload library 
+##check data 
+#str(Match)
+length(unique(Match$WLH_ID))
+
+##make track 
+dat_SB<-make_track(sum_B,x, y,t, id = id,
+                crs=utm10N)
+dat_WB<-make_track(wint_B,x, y,t, id = id,
+                   crs=utm10N)
+
+kde1 <- hr_kde(dat_SB, levels = c(0.5, 0.95))
+kde2 <- hr_kde(dat_WB, levels = c(0.5, 0.95))
+hs1 <- get_isopleths(kde1)
+
+overlap95<-hr_overlap(kde1, kde2)[1,2]
+overlap95.2<-hr_overlap(kde2, kde1)[1,2]
+
+
+
+##write file 
+write.csv(trial,file="RawFiles/Hughes_KMB_RAW_KDESeasonalOverlap_.csv")
+##we want to know the average over the ifetime overlap (reference: Maria)
+
+KMB_migrants<-aggregate(cbind(overlap)~WLH_ID, data=trial,
+                            FUN=mean, na.rm=TRUE)
+head(KMB_migrants)
+write.csv(KMB_migrants,file="KMB_Behaviour/Hughes_KMB_MigratOverlap_2023.csv")
+
+
+
+#################################################################################3
+##Home range size (Seasonal)
+
+kernels<-seasonal %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>% 
+  dplyr::sample_n(1) %>% ##sample 1 point per ID and DateTime 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Season,Year) %>% 
+  dplyr::filter(n()>= 15) %>% ##make sure there are only IDs with enough data 
+  dplyr::ungroup() 
+str(kernels)
+
+###Add Year-ID  column for ID 
+
+kernels$combo<-paste(kernels$WLH_ID,kernels$Year,kernels$Season,sep="_")
+str(kernels)
+
+####calculate home range to take kernels in QGIS 
+data.xy_1 = kernels[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = kernels[c("combo")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=500, extent = 5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=95)
+plot(homerangeRD_1)##plot  
+####write the shape files 
+
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/KMB_Behaviour", 
+        layer="Indiv_KMB_Seasonal_Ranges", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+
+
+
+#######################################################################################
+####Site Fidelity 
+
+##winter first 
+
+seasonal<-d %>% 
+  filter(d$Season!="other") 
+
+unique(seasonal$Season)
+##need to ensure that there are at least 15 relocations per ID in each season and year 
+##THEN we make sure that within each year an ID has both winter and summer 
+kernels<-seasonal %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>% 
+  dplyr::sample_n(1) %>% ##sample 1 point per ID and DateTime 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Season,Year) %>% 
+  dplyr::filter(n()>= 15) %>% ##make sure there are only IDs with enough data 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID) %>% 
+  mutate(Noyr=n_distinct(Year)) %>% ##this is how we get only ones with two season 
+  dplyr::filter(Noyr>1) %>% 
+  ungroup()
+
+
+head(kernels)
+unique(kernels$Noyr)##making sure there are no 1s (corresponding to instances of only one season in a year)
+### want to make a unique field forWLH_ID and ID 
+str(combined_df)
+kernels<-combined_df %>% 
+  filter(Season=="calving") %>%
+  dplyr::group_by(WLH_ID,Date) %>% 
+  sample_n(1) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Year) %>% 
+  dplyr::filter(n()>5) %>% 
+  dplyr::ungroup() %>% 
+  mutate(Date=as.Date(Date))
+kernels$combo<-paste(kernels$WLH_ID,kernels$Year,sep="_")
+#write.csv(kernels,file="RawFiles/Hughes_Kernel_Telemetry_events.csv")
+names(kernels)[names(kernels)=="Longitude"]<-"x"
+names(kernels)[names(kernels)=="Latitude"]<-"y"
+names(kernels)[names(kernels)=="Date"]<-"t"
+names(kernels)[names(kernels)=="combo"]<-"id"
+library(rgdal)
+utm10N<-'+proj=utm +zone=10 ellps=WGS84'
+
+library(amt)
+
+str(kernels)
+dat1<-make_track(kernels,x, y,t, id = id,
+                crs =utm10N)
+
+###seperates ids
+car<-dat1$id
+indiv<-rep(NA,times=length(car))
+#season<-rep(NA,times=length(car))
+year<-rep(NA,times=length(car))
+splt<-strsplit(dat1$id,split="_")
+
+#####this loops through to add the seperated info to the dat object 
+
+for (i in 1:length(dat1$id)){
+  temp<-splt[[i]]
+  indiv[i]<-temp[1]
+  #season[i]<-temp[2]
+  year[i]<-temp[2]
+}
+dat1$indiv<-indiv
+dat1$year<-year
+#dat1$season<-season
+
+WLHID<-rep(NA,times=length(unique(kernels$WLH_ID)))
+levels95<-rep(0.95,times=length(unique(kernels$WLH_ID)))
+levels05<-rep(0.5,times=length(unique(kernels$WLH_ID)))
+overlap95<-rep(NA,times=length(unique(kernels$WLH_ID)))
+overlap95.1<-rep(NA,times=length(unique(kernels$WLH_ID)))
+overlap05<-rep(NA,times=length(unique(kernels$WLH_ID)))
+year<-rep(NA,times=length(unique(kernels$WLH_ID)))
+year2<-rep(NA,times=length(unique(kernels$WLH_ID)))
+
+
+### we set count to 0- then it tells r store things here
+##first thing we do before we store is +1 (count will be 1 and store in first slot)
+##then it will be the first row 
+str(dat1)
+dat1$year<-as.integer(dat1$year)
+length(unique(dat1$id))
+count<-0##we are moving forward each time +1 so we are not storing over things
+unique(dat$season)
+for (i in unique(dat1$year)){
+  for (j in unique(dat1$indiv)){
+    fisher.f1 <- dat1 %>% filter(year==i,indiv==j)
+    fisher.f2<-dat1 %>% filter(year==i+1,indiv==j)
+    if (nrow(fisher.f1)==0 | nrow(fisher.f2)==0) next 
+    count<-count+1
+    kde1 <- hr_kde(fisher.f1, levels = c(0.5, 0.95))
+    kde2 <- hr_kde(fisher.f2, levels = c(0.5, 0.95))
+    overlap95[count]<-hr_overlap(kde1, kde2)[1,2]
+    overlap95.1[count]<-hr_overlap(kde2, kde1)[1,2]
+    overlap05[count]<-hr_overlap(kde1, kde2)[2,2]
+    year[count]<-i
+    year2[count]<-i+1
+    WLHID[count]<-j
+    
+  }
+}
+
+###error fixing 
+for (i in unique(dat1$year)) {
+  for (j in unique(dat1$indiv)) {
+    fisher.f1 <- dat1 %>% filter(year == i, indiv == j)
+    fisher.f2 <- dat1 %>% filter(year == i + 1, indiv == j)
+    
+    tryCatch({
+      if (nrow(fisher.f1) == 0 | nrow(fisher.f2) == 0) next 
+      count <- count + 1
+      kde1 <- hr_kde(fisher.f1, levels = c(0.5, 0.95))
+      kde2 <- hr_kde(fisher.f2, levels = c(0.5, 0.95))
+      overlap95[count] <- hr_overlap(kde1, kde2)[1, 2]
+      overlap95.1[count] <- hr_overlap(kde2, kde1)[1, 2]
+      overlap05[count] <- hr_overlap(kde1, kde2)[2, 2]
+      year[count] <- i
+      year2[count] <- i + 1
+      WLHID[count] <- j
+    }, error = function(e) {
+      # Handle errors (e.g., print a message)
+      cat("Error processing data for year", i, "and individual", j, "\n")
+    })
+  }
+}
+
+
+##when work
+##we will create dataframe using the above created things
+fid.wint<-data.frame(WLH_ID=c(WLHID),year=c(year),
+                     year2=c(year2),
+                    overlap95=c(unlist(overlap95)),
+                    overlap95.1=c(unlist(overlap95.1)))
+head(fid.wint)
+
+wint.fid<-fid.wint %>% 
+  mutate(wint_overlap=ifelse(fid.wint$overlap95<fid.wint$overlap95.1,
+                        fid.wint$overlap95.1,fid.wint$overlap95))
+
+head(wint.fid)
+write.csv(wint.fid,file="KMB_Behaviour/Hughes_Raw_KMB_Wint_Fidelity.csv")
+
+####next compute average 
+KMB_wint_fid<-aggregate(cbind(wint_overlap)~WLH_ID, data=wint.fid,
+                        FUN=mean, na.rm=TRUE)
+##write file
+write.csv(KMB_wint_fid,file="KMB_Behaviour/Hughes_KMB_Winter_Fidelity.csv")
+
+#####
+#Rerun above for calving and then below
+##we will create dataframe using the above created things
+fid.calf<-data.frame(WLH_ID=c(WLHID),year=c(year),
+                     year2=c(year2),
+                     overlap95=c(unlist(overlap95)),
+                     overlap95.1=c(unlist(overlap95.1)))
+head(fid.calf)
+
+calf.fid<-fid.calf %>% 
+  mutate(calf_overlap=ifelse(fid.calf$overlap95<fid.calf$overlap95.1,
+                             fid.calf$overlap95.1,fid.calf$overlap95)) %>% 
+  select(c(WLH_ID,year,year2,calf_overlap))
+
+head(calf.fid)
+write.csv(calf.fid,file="KMB_Behaviour/Hughes_Raw_KMB_calving_Fidelity.csv")
+
+####next compute average 
+KMB_calf_fid<-aggregate(cbind(calf_overlap)~WLH_ID, data=calf.fid,
+                        FUN=mean, na.rm=TRUE)
+##write file
+write.csv(KMB_calf_fid,file="KMB_Behaviour/Hughes_KMB_Calving_Fidelity.csv")
+
+
+-+#Rerun above for summer and then below
+##we will create dataframe using the above created things
+fid.sum<-data.frame(WLH_ID=c(WLHID),year=c(year),
+                    year2=c(year2),
+                    overlap95=c(unlist(overlap95)),
+                    overlap95.1=c(unlist(overlap95.1)))
+head(fid.sum)
+
+sum.fid<-fid.sum %>% 
+  mutate(sum_overlap=ifelse(fid.sum$overlap95<fid.sum$overlap95.1,
+                            fid.sum$overlap95.1,fid.sum$overlap95)) %>% 
+  select(c(WLH_ID,year,year2,sum_overlap))
+
+head(sum.fid)
+write.csv(sum.fid,file="KMB_Behaviour/Hughes_Raw_KMB_summer_Fidelity.csv")
+
+####next compute average 
+KMB_sum_fid<-aggregate(cbind(sum_overlap)~WLH_ID, data=sum.fid,
+                       FUN=mean, na.rm=TRUE)
+##write file
+write.csv(KMB_sum_fid,file="KMB_Behaviour/Hughes_KMB_Summer_Fidelity.csv")
+
+
+
+
+#Rerun above for rut and then below
+##we will create dataframe using the above created things
+fid.rut<-data.frame(WLH_ID=c(WLHID),year=c(year),
+                     year2=c(year2),
+                     overlap95=c(unlist(overlap95)),
+                     overlap95.1=c(unlist(overlap95.1)))
+head(fid.rut)
+
+rut.fid<-fid.rut %>% 
+  mutate(rut_overlap=ifelse(fid.rut$overlap95<fid.rut$overlap95.1,
+                             fid.rut$overlap95.1,fid.rut$overlap95)) %>% 
+  select(c(WLH_ID,year,year2,rut_overlap))
+
+head(rut.fid)
+write.csv(rut.fid,file="KMB_Behaviour/Hughes_Raw_KMB_Rut_Fidelity.csv")
+
+####next compute average 
+KMB_rut_fid<-rut.fid %>% 
+  group_by(WLH_ID) %>% 
+  mutate(rut_overlap=mean(rut_overlap,na.rm=TRUE)) %>% 
+  sample_n(1) %>% 
+  ungroup() %>% 
+  select(c(WLH_ID,rut_overlap)) %>% 
+  na.omit()
+
+#KMB_rut_fid<-aggregate(rut_overlap~WLH_ID, data=rut.fid,
+ #                       FUN=mean, na.rm=TRUE)
+##write file
+write.csv(KMB_rut_fid,file="KMB_Behaviour/Hughes_KMB_Rut_Fidelity.csv")
+
+
+######### we want to add all of these together too. 
+
+Fidelity<-merge(KMB_rut_fid,KMB_calf_fid,by="WLH_ID", all=TRUE)
+Fidelity<-merge (Fidelity,KMB_sum_fid,by="WLH_ID",all=TRUE)
+Fidelity<-merge(Fidelity, KMB_wint_fid,by="WLH_ID",all=TRUE)
+
+### check how many NAs are in each one 
+sapply(Fidelity,function(x)all(any(is.na(x))))
+sapply(Fidelity,function(x)sum(is.na(x)))
+##we might want to drop these later but I will keep them for now. 
+
+
+
+
+##########################################################################3
+#####Home Range Size 
+## based on individual home ranges and calculated in QGIS 
+
+##check the following telemetry: 17-10520_2019, 20-2007_2021, 20-1016_2021, 17-10824_2020,
+##20-2854_2021, 20-2007_2021, 18-11435_2019, 18-11435_2018, 17-10803_2018, 18-13693_2019,
+##18-11435_2019, 20-1960_2021, 17-10800_2020, 
+
+# This was caomputed in QGIS using the MCP convex polygons for individuals 
+# in each season and year. The area and perimeter were then computed (in kms) 
+# for all MCPs. The 100% MCP was used. 
+
+
+
+
+
+
+
+######################################################################################
+##calving info 
+##sedentary estimated to drop to 1.1 km/day (45.8 m/h) for approx 3 days (moving avg)
+##Ferguson and Elkie 2004
+##15.3 m/h for 3 days moving avg; DeMars et al. 2013
+####<500m/25 hours (20 m/h) for >=3 days for calving; wilson 2013 and Pond et al. 2016
+
+
+##step one- subset to around calving season (May to July)
+##step 2- compute the distance between points for this time frame
+##compute the distance traveled per 25 hour window during calving season
+##look at 3 day moving average 
+##find times that are >=3 days under the 500 m/25 hours window. 
+##get calving date (start of this) 
+##40 day season 
+# d<-final_data
+calf<-updated_data %>% 
+  filter(WLH_ID=="19-3371"|WLH_ID=="19-3370"|WLH_ID=="18-13125"|
+           WLH_ID=="18-13119"|WLH_ID=="18-11748"|WLH_ID=="17-10740"|
+           WLH_ID=="17-10700") %>% 
+  filter(Month==5|Month==6|Month==7) %>% 
+  tidyr::drop_na(elev)
+  #select(WLH_ID,DateTime,Date,Longitude,Latitude,dist,timediff)
+library(geosphere)
+str(calf)
+unique(calf$Month)
+#Please make sure to adjust the column names if they differ in your actual results2 dataframe. Additionally, if you want to store this new dataframe as a separate variable or export it to a file, you can use write.csv() or other appropriate functions accordingly.
+new_data<- calf%>%
+  dplyr::select(c(WLH_ID,DateTime,Date,Longitude,Latitude,Year)) %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>%
+  sample_n(1) %>%
+  dplyr::ungroup() %>%
+  dplyr::group_by(WLH_ID,Year) %>%
+  dplyr::arrange(DateTime) %>%
+  mutate(nextrow_lat = dplyr::lead(Latitude),
+         #nextrow_elevation=dplyr::lead(elev),
+         nextrow_long=dplyr::lead(Longitude))%>%
+  mutate(timedif = lead(DateTime)-DateTime) %>% #timedif is in seconds
+  mutate(timedif=as.numeric(timedif/3600))%>% #units get dropped by this##UNITS IN HOURS
+  rowwise() %>% ##do this for each row at a time
+  mutate(dist = gdist(Latitude, Longitude, nextrow_lat, nextrow_long, units = "m")) %>%
+  ##convert to KM#calculates distance between points
+  dplyr::ungroup() %>%
+  dplyr::group_by(WLH_ID,Date) %>%
+  dplyr::arrange(DateTime) %>%
+  mutate(Total_Daily_Dist=sum(dist)) %>%
+  sample_n(1) %>%
+  #mutate(dist_by_day = zoo::rollmean(Total_Daily_Dist, k = 3, fill = NA)) %>%
+  ungroup() %>%
+  arrange(WLH_ID,DateTime)
+head(new_data)
+unique(d$Population)
+
+# Step 1: Convert the dataframe to a data.table
+df<-new_data %>%
+  dplyr::select(c(WLH_ID,Date,Year,Total_Daily_Dist)) %>%
+  mutate(dist=as.numeric(Total_Daily_Dist)) %>%
+  arrange(WLH_ID,Date)
+#filter(dist<500)
+head(df)
+
+## add columns that are logical based on our criteria
+df<-df %>%
+  dplyr::arrange(WLH_ID,Date)
+dat<-df %>%
+  dplyr::mutate(Date=as.Date(Date)) %>%
+  dplyr::arrange(WLH_ID,Date) %>%
+  group_by(WLH_ID,Year) %>%
+  dplyr::arrange(Date) %>%
+  dplyr::mutate(Datecrit=(Date-lag(Date)==1) & (Date-lag(Date,2)==2),
+         Movecrit=Total_Daily_Dist<500 & lag(Total_Daily_Dist)<500 &
+           lag(Total_Daily_Dist,2)<500) %>%
+  dplyr::ungroup() %>%
+  dplyr::arrange(WLH_ID,Date) %>%
+  dplyr::mutate(YDAY=format(Date,"%j"))
+
+length(unique(dat$WLH_ID))
+str(dat)
+
+##pull the min date when both our criteria is TRUE
+trial<-dat %>%
+  mutate(minDate=ifelse(Datecrit==TRUE & Movecrit==TRUE,YDAY,NA),
+         threeDay_move=ifelse(Datecrit==TRUE & Movecrit==TRUE,
+                              (Total_Daily_Dist+lag(Total_Daily_Dist)+
+                                 lag(Total_Daily_Dist,2)),NA))
+
+
+##drop all the times our criteria is NOT TRUE (or FALSE)
+trial<-trial %>%
+  tidyr::drop_na(minDate) %>%
+  dplyr::group_by(WLH_ID,Year) %>%
+  slice(which.min(threeDay_move)) %>%
+  mutate(calf_Date=Date) %>%
+  dplyr::ungroup() %>%
+  dplyr::select(c(WLH_ID,Year,calf_Date,threeDay_move,YDAY))
+###Check what the difference in calving dates are between years
+trial<-trial %>%
+  dplyr::arrange(WLH_ID,Year) %>%
+  dplyr::group_by(WLH_ID) %>%
+  dplyr::mutate(Calf_date_diff=as.numeric(YDAY)-lag(as.numeric(YDAY)))
+
+
+#####here I am looking for the locations on the two points and the rut centroid
+rut<-ext %>% 
+  filter(Season=="rut")
+
+####calculate home range to take kernels in QGIS 
+data.xy_1 = rut[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = rut[c("WLH_ID")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=100, extent = 2.5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=5)
+plot(homerangeRD_1)##plot  
+####write the shape files 
+
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/GPS_checks", 
+         layer="20-2854_rut_5", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+str(ext)
+canopy<-ext %>% 
+  filter((Date==as.Date("2021-07-30") & WLH_ID=="20-2854_WGN")|
+           (Date==as.Date("2021-05-30")& WLH_ID=="20-2854_B"))
+
+canopy_avg<-aggregate(cbind(Longitude,Latitude)~ WLH_ID, data=canopy,FUN=mean,n.rm=TRUE)
+write.csv(canopy_avg,file="GPS_checks/avg_calf_loc.csv")
+write.csv(canopy,file="GPS_checks/canopy_locs.csv")
+####path length- this is already calculated but lost in whatever R issue when I restarted my laptop 
+##need to add at a later date 
+#####fixing the rest of the edge to areas 
+str(dat)
+dat<-dat %>% 
+  mutate(calf_edge2area=calf_perimeter/(sqrt(calf_area)),
+         wint_edge2area=wint_perimeter/(sqrt(wint_area)),
+         sum_edge2area=sum_perimeter/(sqrt(sum_area)))
+
+
+write.csv(dat,file="KMB_Behaviour/Hughes_KMB_Final_Behaviour_2023.csv")
+
+
+
+
+
+
+
+######################################################################33
+##Area also dropped n computer restart- this one was more annoying and done mainly in QGIS 
+
+
+head(d)
+
+
+########calculate the perimeter of a circle of the same area as the seasonal home range areas
+dat<-read.csv("KMB_Behaviour/Hughes_KMB_Final_Behaviour_2023.csv") %>% 
+  dplyr::select(-c(X))
+head(dat)
+str(dat)
+#dat<-dat %>% 
+ # tidyr::drop_na(YDAY) %>% 
+  # dplyr::select(-c(Canopy_Cover,calf_Date,YDAY)) %>% 
+dat<-dat %>% group_by(WLH_ID) %>% 
+  sample_n(1) %>% 
+  ungroup()
+####extra ones missed
+WLH_ID<-c("20-2854_B","20-2854_WGN")
+sum_area<-c(163.735,80.66)
+win_area<-c(318.389,308)
+calf_area<-c(28.546,238.067)
+wint_perm<-c(52.999,74.572)
+calf_perm<-c(28.546,79.798)
+sum_perm<-c(64.608,80.663)
+extra<-data.frame(WLH_ID=WLH_ID,sum_area=sum_area,sum_perm=sum_perm,wint_area=win_area,
+                     wint_perm=wint_perm,calf_area=calf_area,calf_perm=calf_perm)
+extra<- extra %>%
+  mutate(calf_circle_radius = sqrt(calf_area / pi),
+         calf_circle_perm = 2 * pi * calf_circle_radius,
+         calf_HR_shape = calf_perm/calf_circle_perm,
+         wint_circle_radius = sqrt(wint_area / pi),
+         wint_circle_perm = 2 * pi * wint_circle_radius,
+         wint_HR_shape = wint_perm/wint_circle_perm,
+         sum_circle_radius = sqrt(sum_area / pi),
+         sum_circle_perm = 2 * pi * (sum_area/pi),
+         sum_HR_shape = sum_perm/sum_circle_perm) %>% 
+  dplyr::select(-c(calf_circle_radius,calf_circle_perm,wint_circle_radius,wint_circle_perm,
+                   sum_circle_radius,sum_circle_perm))
+
+
+extra<-extra %>% 
+  mutate(sum_edge2area=sum_perm/(sqrt(sum_area)),
+         wint_edge2area=wint_perm/(sqrt(wint_area)),
+         calf_edge2area=calf_perm/(sqrt(calf_perm)))
+
+dat <- dat %>%
+  mutate(calf_circle_radius = sqrt(calf_area / pi),
+         calf_circle_perimeter = 2 * pi * calf_circle_radius,
+         calf_HR_shape = calf_perimeter/calf_circle_perimeter,
+         wint_circle_radius = sqrt(wint_area / pi),
+         wint_circle_perimeter = 2 * pi * wint_circle_radius,
+         wint_HR_shape = wint_perimeter/wint_circle_perimeter,
+         sum_circle_radius = sqrt(sum_area / pi),
+         sum_circle_perimeter = 2 * pi * (sum_area/pi),
+         sum_HR_shape = sum_perimeter/sum_circle_perimeter) %>% 
+  dplyr::select(-c(calf_circle_radius,calf_circle_perimeter,wint_circle_radius,wint_circle_perimeter,
+                  sum_circle_radius,sum_circle_perimeter))
+
+####re-adding calving elevation and elevation gain from late winter to calving from above
+dat<-left_join(dat,trial1,by="WLH_ID") %>% 
+  mutate(calf_elev=calving) %>% 
+  select(-c(calving))
+##write this file: 
+
+write.csv(dat,file="KMB_Behaviour/Hughes_KMB_Final_Behaviour_2023.csv")
+
+
+
+########calving path lengths 
+
+calf_PL<-df %>% 
+  filter(Season=="calving") %>% 
+  dplyr::group_by(WLH_ID,Year) %>%
+  arrange(DateTime) %>%
+  mutate(nextrow_lat = dplyr::lead(Latitude),
+         nextrow_elevation=dplyr::lead(elev),
+         nextrow_long=dplyr::lead(Longitude))%>%
+  rowwise() %>% ##do this for each row at a time
+  mutate(dist = gdist(Latitude, Longitude, nextrow_lat, nextrow_long, units = "m")) %>%
+  ##convert to KM#calculates distance between points
+  dplyr::ungroup() %>%
+  arrange(WLH_ID,DateTime)
+
+calfPL<-aggregate(dist~WLH_ID+Year,data=calf_PL,FUN=sum,na.rm=TRUE)
+
+calf_pathlength<-aggregate(dist~WLH_ID,data=calfPL,FUN=mean,na.rm=TRUE)  
+
+
+
+#####merge to the above
+dat<-left_join(dat,calf_pathlength,by="WLH_ID") %>% 
+  mutate(calf_path=dist) %>% 
+  select(-c(dist))
+
+##########Movement path length 
+##(and elev diff)
+move_PL<-Trial %>% 
+  filter(Season=="move") %>% 
+  dplyr::group_by(WLH_ID,Year) %>%
+  arrange(DateTime) %>%
+  mutate(nextrow_lat = dplyr::lead(Latitude),
+         nextrow_elevation=dplyr::lead(elev),
+         nextrow_long=dplyr::lead(Longitude))%>%
+  rowwise() %>% ##do this for each row at a time
+  mutate(dist = gdist(Latitude, Longitude, nextrow_lat, nextrow_long, units = "m")) %>%
+  ##convert to KM#calculates distance between points
+  dplyr::ungroup() %>%
+  dplyr::select(c(WLH_ID,Latitude,Longitude,nextrow_lat,nextrow_long,
+                  Year,Ecotype,DU,dist,DateTime,Date)) %>% 
+  arrange(WLH_ID,DateTime)
+head(move_PL)
+
+movePL<-aggregate(dist~WLH_ID+Year,data=move_PL,FUN=sum,na.rm=TRUE)
+
+finmovePL<-movePL %>% 
+  dplyr::group_by(WLH_ID) %>% 
+  filter(Year==max(Year))
+write.csv(finmovePL,file="KMB_Behaviour/Move_PL.csv")
+max(movePL$dist)
+check<-subset(movePL,movePL$dist>=1200000)
+####now do elevation in this period 
+df<-d %>% 
+  filter(Month==11& Day>=16)
+move_elev<-df %>% 
+  #filter(Season=="move") %>% 
+  dplyr::group_by(WLH_ID,Year) %>%
+  dplyr::summarise(moveelev_min=min(elev),
+            moveelev_max=max(elev)) %>% 
+  ungroup()
+
+head(move_elev)
+move_elev<-move_elev %>% 
+  mutate(move_elev_diff=(moveelev_min-moveelev_max)) %>% 
+  group_by(WLH_ID) %>% 
+  filter(Year==max(Year))
+
+# check<-move_elev %>% 
+#   filter(moveelev_min<200)
+
+write.csv(move_elev,file="KMB_Behaviour/move_elev.csv")
+
+IDs<-check %>% 
+  group_by(WLH_ID) %>% 
+  sample_n(1) %>% 
+  ungroup()
+df$Row.Order<-row.names(df)
+head(df)
+check_locs<-df %>% 
+  filter(Season=="move")
+
+check_me2<-df[df$WLH_ID %in% IDs$WLH_ID,]
+write.csv(check_me,file="GPS_checks/Move_Path_Checks.csv")
+
+calf_pathlength<-aggregate(dist~WLH_ID,data=calfPL,FUN=mean,na.rm=TRUE)  
+
+check2<-df %>%
+  filter(WLH_ID=="20-2854") %>% 
+  arrange(DateTime)
+  
+Trial<-df %>% 
+  mutate(WLH_ID=case_when(WLH_ID == "20-2854" & Population == "Barkerville" ~ "20-2854_B",
+                          WLH_ID == "20-2854" & Population == "Wells Gray North" ~ "20-2854_WGN",
+                          TRUE ~ WLH_ID  # Keep WLH_ID as is for other cases
+  ))
+
+##NOW do the above with TRAIL dataset 
+
+
+
+##############################################################
+##compute the location of each individual (rutting location)
+##rut: 16 september to 15 november
+
+loc.dat<-df %>% 
+  filter((Month==9 & Day>=16)|(Month==10 & Day<=15))
+unique(loc.dat$Season)
+
+loc.kernels<-loc.dat %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>% 
+  dplyr::sample_n(1) %>% ##sample 1 point per ID and DateTime 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(WLH_ID,Year) %>% 
+  dplyr::filter(n()>= 15) %>% ##make sure there are only IDs with enough data 
+  dplyr::ungroup() 
+str(loc.kernels)
+
+###Add Year-ID  column for ID 
+
+loc.kernels$combo<-paste(loc.kernels$WLH_ID,loc.kernels$Year,sep="_")
+
+####will be quicker to do by ecotype? perhaps needs a smaller grid? 
+Bor<-loc.kernels %>% 
+  filter(Ecotype=="Boreal")
+Nor<-loc.kernels %>% 
+  filter(Ecotype=="Northern")
+Mount<-loc.kernels %>% 
+  filter(Ecotype=="Mountain")
+####calculate home range to take kernels in QGIS 
+data.xy_1 = Bor[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = Bor[c("combo")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=500, extent = 5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=5)
+plot(homerangeRD_1)##plot  
+####write the shape files 
+
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/KMB_Behaviour", 
+         layer="Indiv_KMB_Rut_Ranges_Bor", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+
+
+####calculate home range to take kernels in QGIS 
+data.xy_1 = Nor[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = Nor[c("combo")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=500, extent = 5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=5)
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/KMB_Behaviour", 
+         layer="Indiv_KMB_Rut_Ranges_NOR", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+
+
+####calculate home range to take kernels in QGIS 
+data.xy_1 = Mount[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = Mount[c("combo")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=550, extent = 2.5)
+image(ud_30_1)
+
+##calculate Home range polygons 
+
+
+homerangeRD_1 <- getverticeshr(ud_30_1,percent=5)
+
+writeOGR(obj=homerangeRD_1, dsn="~/PhD_TelemetryData2022/Master_RawData/KMB_Behaviour", 
+         layer="Indiv_KMB_Rut_Ranges_Mount", driver="ESRI Shapefile")###command to export in shapefile. This will save without projections. when importing in GIS define projections for the layers
+
+
+
+
+
+
+######import and compile rut centroids for locations 
+Northern<- read.csv("KMB_Behaviour/Northern_KMB_Rut_Centroids.csv")
+Boreal<- read.csv("KMB_Behaviour/Boreal_KMB_Rut_Centroids.csv")
+Mountain<- read.csv("KMB_Behaviour/Mountain_KMB_Rut_Centroids.csv")
+
+
+
+Northern[c('WLH_ID', 'Year')] <- str_split_fixed(Northern$id, '_', 2)
+Boreal[c('WLH_ID', 'Year')] <- str_split_fixed(Boreal$id, '_', 2)
+Mountain[c('WLH_ID', 'Year')] <- str_split_fixed(Mountain$id, '_', 2)
+
+
+locations<-rbind(Northern,Boreal,Mountain)
+locations$Year<-as.numeric(locations$Year)
+check<-locations %>%
+  group_by(WLH_ID) %>% 
+  arrange(locations$Year) %>% 
+  mutate(nextyear_lat=lead(Latitude),
+         nextyear_long=lead(Longitude)) %>% 
+  rowwise() %>% 
+  mutate(dist = gdist(Latitude, Longitude, nextyear_lat, nextyear_long, units = "m")) %>% 
+    ungroup() %>% 
+    arrange(WLH_ID,Year)
+write.csv(locations,file="KMB_Behaviour/Hughes_KMB_Rut_Centroids_AllYrs.csv")
+
+locations<-locations %>% 
+  group_by(WLH_ID) %>% 
+  filter(Year==max(Year))
+
+write.csv(locations,file="KMB_Behaviour/Hughes_KMB_rut_Locations.csv")
+
+
+#####missing locations from the other R script 
+missing_ids
+head(df)
+length(unique(missing$WLH_ID))
+length(unique(missing_ids))
+missing <- df[df$WLH_ID %in% missing_ids, ] #%>% 
+  #filter(Month==6)
+unique(missing$Month)
+
+length(unique(missing$WLH_ID))
+write.csv(missing,file="KMB_Behaviour/Hughes_MCP_Rut_Events.csv")
+mis<-read.csv("KMB_Behaviour/missing_KMB_Rut_Centroids.csv")
+mis2<-read.csv("KMB_Behaviour/missing_KMB_Rut_Centroids2.csv")
+mis3<-read.csv("KMB_Behaviour/missing_KMB_Rut_Centroids3.csv")
+mis2<-mis2 %>% 
+  dplyr::select(-c(area,perimeter))
+locations<-locations %>% 
+  dplyr::select(-c(area,perimeter))
+locations<-rbind(locations,mis3)
+head(locations)
+
+
+
+#############################################33
+##writing file for MCP analysis in R 
+df<-df %>% 
+  filter(Season!="other")
+unique(df$Season)
+unique(df$DU)
+unique(df$Ecotype)
+df$combo<-paste(df$WLH_ID,df$Season,df$Year,sep="_")
+str(df)
+kernels<-df %>% 
+  dplyr::group_by(WLH_ID,DateTime) %>% 
+  dplyr::sample_n(1) %>% ##sample 1 point per ID and DateTime 
+  dplyr::ungroup() %>% 
+  dplyr::group_by(combo) %>% 
+  dplyr::filter(n()>= 15) %>% ##make sure there are only IDs with enough data 
+  dplyr::ungroup() 
+str(kernels)
+write.csv(kernels,file="KMB_Behaviour/Hughes_KMB_Telemetry_Events_MCPs1.csv")
+
+
+###figuring out how many points need to be sampled within each range 
+head(kernels)
+frequency<-kernels %>% 
+  group_by(combo) %>% 
+  summarise(Count=n())
+length(unique(kernels$combo))
+write.csv(frequency,file="KMB_Behaviour/KMB_RandomPoint_Frequency.csv")
+
+
+
+#######
+#figure creation for presentation 
+filt<-d %>% 
+  filter(WLH_ID=="17-10708") %>% 
+  filter(Year==2020)
+unique(filt$Season)
+
+HRW<-filt %>% 
+  filter(Season=="winter")
+HRS<-filt %>% 
+  filter(Season=="summer")
+####calculate home range to take kernels in QGIS 
+data.xy_1 = HRS[c("Longitude","Latitude")]# define columns of your coordinates
+#data.xy_1 = perday[c("Longitude","Latitude")]## try with just d 
+
+xysp_1 <- SpatialPoints(data.xy_1)## create class Spatial Points for all locations
+
+class(xysp_1)
+proj4string(xysp_1) <-CRS("+proj=utm +zone=10 +datum=WGS84 +units=m")##here you will define your coordinate system
+
+sppt_1<-data.frame(xysp_1)##Create a Spatial Data Frame from all locations
+IDs = HRS[c("Season")]###1 is the column of your id
+
+coordinates(IDs)<-sppt_1
+
+##Calculate kernel densities 
+
+ud_30_1=kernelUD(IDs[,1], h = "href", kern = c("bivnorm"),grid=200, 
+                 extent = 2.5)
+#image(ud_30_1)
+
+homerangeRD_1S <- getverticeshr(ud_30_1,percent=95)
+plot(homerangeRD_1S)
+class(homerangeRD_1)
+
+# names(eco_HR)[names(eco_HR)=="id"]<-"Ecotype"
+# ##set the projection 
+# st_crs(eco_HR)<-st_crs()
+# ##transform 
+# st_transform(eco_HR, crs = st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84 _no_defs "))
+
+trial<-filt %>% 
+  select(c(Season,Latitude,Longitude)) %>% 
+  st_as_sf(coords=c("Longitude","Latitude"),crs="+proj=longlat +ellps=WGS84 +datum=WGS84 _no_defs ")
+##code as factors for ID 
+# Assuming homerangeRD_1 is a SpatialPolygonsDataFrame
+homerangeRD_sfW <- st_as_sf(homerangeRD_1W)
+
+
+
+# Assuming homerangeRD_1 is a SpatialPolygonsDataFrame
+homerangeRD_sfW <- st_as_sf(homerangeRD_1W)
+
+# Check if CRS is missing and set it
+if (is.na(st_crs(homerangeRD_sfW))) {
+  homerangeRD_sfW <- st_set_crs(homerangeRD_sfW, 4326)  # Assigning EPSG code for WGS84
+}
+
+# Now set the projection using st_transform
+homerangeRD_sfW <- st_transform(homerangeRD_sfW, crs = st_crs("+proj=longlat +ellps=WGS84 +datum=WGS84"))
+
+# Check the result
+print(homerangeRD_sf)
+names(homerangeRD_sf)[names(homerangeRD_sf)=="id"]<-"Season"
+head(trial)
+plot1<-ggplot()+
+  #geom_sf(data=shapeAB,colour="grey")+ #AB boundary 
+  #geom_sf(data=shapeNWT,colour="grey")+ ##NWT Boundary 
+  #geom_sf(data=shapeYU,colour="grey")+ ## Yukon boundary 
+  geom_sf(data=homerangeRD_sfW,colour="black",fill="blue")+ ##BC boundary with black boarder 
+  geom_sf(data=homerangeRD_sfS,colour="black",fill="red")+ ##add ecotype with fill for ID 
+  #scale_fill_manual(values=c("#FFEAB38C","#3D8BFF77","#52FF6E66"))+ ##set colours of fill 
+  geom_sf(data=trial)+ ##add cluster locations colour by cluster 
+  coord_sf(datum=st_crs(mycrs))+ ##set coodinates to allow grid
+  #guides(colour=guide_legend(title="Behavioural cluster"))+ ##include legend 
+  theme_bw()+ ##add theme 
+  theme(panel.grid.major = 
+          element_line(colour = 'grey50', size = 0.3, linetype = 3)) ##set grid panel (no scale)
+
+plot1
